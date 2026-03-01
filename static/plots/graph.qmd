@@ -1,0 +1,343 @@
+## 图1
+```{python}
+import pandas as pd
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import os
+
+# 1. 设置路径并读取派生数据
+DERIVED_DIR = '/Users/somihu/Desktop/研二/PPHA 30538/Final project/data/derived-data'
+
+# 读取地理边界 (GeoJSON)
+gdf_communities = gpd.read_file(os.path.join(DERIVED_DIR, 'cleaned_communities.geojson'))
+
+# 读取 ACS 经济数据 (CSV)
+df_acs = pd.read_csv(os.path.join(DERIVED_DIR, 'cleaned_acs_data.csv'))
+
+# 读取红灯摄像头汇总数据 (CSV)
+df_cameras = pd.read_csv(os.path.join(DERIVED_DIR, 'cleaned_red_light_2023.csv'))
+
+# 2. 将数据打通：将 ACS 数据合并到地理边界中
+# 注意：在数据清洗阶段我们已经统一了 COMMUNITY 的格式（大写且无空格）
+gdf_map = gdf_communities.merge(df_acs, left_on='COMMUNITY', right_on='Community Area')
+
+# 3. 将摄像头 CSV 转换为 GeoDataFrame
+gdf_cameras = gpd.GeoDataFrame(
+    df_cameras, 
+    geometry=gpd.points_from_xy(df_cameras.LONGITUDE, df_cameras.LATITUDE),
+    crs="EPSG:4326"
+)
+
+# 4. 开始绘图
+fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+
+# 绘制底层：分层设色图 (Choropleth)
+# 我们使用 'Poverty_Rate' 作为颜色深浅的依据
+gdf_map.plot(
+    column='Poverty_Rate', 
+    cmap='YlOrRd', 
+    legend=True,
+    legend_kwds={'label': "Poverty Rate (%)", 'orientation': "vertical"},
+    ax=ax,
+    edgecolor='white',
+    linewidth=0.5
+)
+
+# 绘制顶层：点图 (Points)
+gdf_cameras.plot(
+    ax=ax, 
+    color='blue', 
+    markersize=10, 
+    alpha=0.6, 
+    label='Red Light Camera Locations'
+)
+
+# 添加装饰元素
+ax.set_title('Spatial Exposure: Red Light Cameras vs. Poverty Rates (Chicago 2023)', fontsize=15)
+ax.set_axis_off() # 去除坐标轴（经纬度刻度）让地图更美观
+plt.legend(loc='lower right')
+
+plt.show()
+```
+
+## 图2.1
+```{python}
+import altair as alt
+
+cameras_with_community = gpd.sjoin(gdf_cameras, gdf_communities, how="left", predicate="within")
+efficiency_df = cameras_with_community.merge(df_acs, left_on='COMMUNITY', right_on='Community Area')
+# 1. 以社区为单位汇总数据，计算每个社区的平均单机违章数
+community_efficiency = efficiency_df.groupby('Community Area').agg({
+    'TOTAL_VIOLATIONS_2023': 'mean',
+    'Poverty_Rate': 'first'
+}).reset_index()
+
+# 2. 创建基础图表
+base = alt.Chart(community_efficiency).encode(
+    x=alt.X('Poverty_Rate:Q', 
+            title="Community Poverty Rate",
+            axis=alt.Axis(format='%')),
+    y=alt.Y('TOTAL_VIOLATIONS_2023:Q', 
+            title="Average Violations per Camera")
+)
+
+# 3. 绘制散点：使用中性的钢蓝色，降低不透明度以处理可能的重叠点
+points = base.mark_circle(size=70, opacity=0.5, color='steelblue').encode(
+    tooltip=['Community Area', 'Poverty_Rate', 'TOTAL_VIOLATIONS_2023']
+)
+
+# 4. 添加线性回归趋势线：使用醒目的红色来强调两者之间的相关性
+trend_line = base.transform_regression(
+    'Poverty_Rate', 'TOTAL_VIOLATIONS_2023'
+).mark_line(color='crimson', size=3)
+
+# 5. 组合并显示
+chart2_final = (points + trend_line).properties(
+    title='Correlation: Camera Productivity vs. Community Poverty (2023)',
+    width=600,
+    height=400
+)
+
+chart2_final.display()
+```
+
+Several potential outliers were noted:
+
+1. THE LOOP (Ignore): As a central business district, its traffic consists of tens of thousands of commuters and tourists. Retaining it would mislead the true relationship between poverty rates and enforcement pressure, given the significant disconnect between the target audience of tickets and local residents.
+
+2. FULLER PARK (Ignore): This community is one of Chicago's least populated and contains a major highway hub (Dan Ryan Expressway). Removing it would make the regression trend more universal.
+
+3. LAKE VIEW (Retain): This is a mature, high-density residential area. Retaining it serves as a typical example of an "affluent, high-density area," contrasting it with similarly high-density but high-poverty communities.
+
+4. GARFIELD RIDGE (Retain): The high violation rate in this area is related to the transit traffic from its proximity to Midway Airport. However, because it still possesses complete community residential characteristics, retaining it reflects the enforcement situation in "communities on the periphery of large infrastructure."
+
+5. CHATHAM and SOUTH SHORE (Retain): Typical low- to middle-income neighborhoods; removing them would mask the structural pressures faced by communities with specific socioeconomic backgrounds.
+
+## 图2.2
+```{python}
+outliers = ['LOOP', 'FULLER PARK']
+community_efficiency_filtered = community_efficiency[
+    ~community_efficiency['Community Area'].isin(outliers)
+].copy()
+
+# 3. 计算统一的坐标轴范围，确保两张图具备可比性
+x_max = community_efficiency['Poverty_Rate'].max() * 1.05
+y_max = community_efficiency['TOTAL_VIOLATIONS_2023'].max() * 1.05
+
+# 4. 定义标准化的绘图函数
+def create_trend_chart(data, title):
+    base = alt.Chart(data).encode(
+        x=alt.X('Poverty_Rate:Q', 
+                title="Community Poverty Rate",
+                axis=alt.Axis(format='%'),
+                scale=alt.Scale(domain=[0, x_max])),
+        y=alt.Y('TOTAL_VIOLATIONS_2023:Q', 
+                title="Average Violations per Camera",
+                scale=alt.Scale(domain=[0, y_max]))
+    )
+    
+    points = base.mark_circle(size=70, opacity=0.5, color='steelblue').encode(
+        tooltip=['Community Area', 'Poverty_Rate', 'TOTAL_VIOLATIONS_2023']
+    )
+    
+    trend_line = base.transform_regression(
+        'Poverty_Rate', 'TOTAL_VIOLATIONS_2023'
+    ).mark_line(color='crimson', size=3)
+    
+    return (points + trend_line).properties(
+        title=title,
+        width=350,
+        height=300
+    )
+
+# 5. 生成对比图并水平排列
+chart_full = create_trend_chart(community_efficiency, "Full Sample (With Outliers)")
+chart_filtered = create_trend_chart(community_efficiency_filtered, "Filtered Sample (Without Loop/Fuller Park)")
+
+(chart_full | chart_filtered).display()
+```
+
+## 图3
+```{python}
+# 1. 汇总社区层面的总数据
+# 我们需要每个社区的总违章数（该社区内所有相机的总和）和总人口
+community_totals = efficiency_df.groupby('Community Area').agg({
+    'TOTAL_VIOLATIONS_2023': 'sum',
+    'Total Population': 'first',
+    'Est_Monthly_Income': 'first'
+}).reset_index()
+
+# 2. 剔除离群点并划分五分位
+df_share = community_totals[~community_totals['Community Area'].isin(outliers)].copy()
+
+df_share['Income_Group'] = pd.qcut(
+    df_share['Est_Monthly_Income'], 
+    q=5, 
+    labels=['Poorest 20%', 'Lower Middle', 'Middle', 'Upper Middle', 'Wealthiest 20%']
+)
+
+# 3. 计算各组的总人口和总违章占比
+group_shares = df_share.groupby('Income_Group').agg({
+    'Total Population': 'sum',
+    'TOTAL_VIOLATIONS_2023': 'sum'
+}).reset_index()
+
+# 计算百分比
+total_pop = group_shares['Total Population'].sum()
+total_violations = group_shares['TOTAL_VIOLATIONS_2023'].sum()
+
+group_shares['Population Share'] = group_shares['Total Population'] / total_pop
+group_shares['Violation Share'] = group_shares['TOTAL_VIOLATIONS_2023'] / total_violations
+
+# 4. 转换数据格式以方便 Altair 绘制分组柱状图 (Melt)
+df_plot = group_shares.melt(
+    id_vars='Income_Group', 
+    value_vars=['Population Share', 'Violation Share'],
+    var_name='Category', 
+    value_name='Percentage'
+)
+
+# 5. 绘制对比柱状图
+share_chart = alt.Chart(df_plot).mark_bar().encode(
+    x=alt.X('Category:N', title=None, axis=alt.Axis(labels=False)),
+    y=alt.Y('Percentage:Q', axis=alt.Axis(format='%'), title="Share of Total (%)"),
+    color=alt.Color('Category:N', scale=alt.Scale(range=['#4682b4', '#d62728'])),
+    column=alt.Column('Income_Group:O', 
+                      sort=['Poorest 20%', 'Lower Middle', 'Middle', 'Upper Middle', 'Wealthiest 20%'],
+                      title="Income Groups")
+).properties(
+    title='Burden Disparity: Population Share vs. Violation Share',
+    width=120,
+    height=300
+)
+
+share_chart.display()
+```
+
+
+## 图4
+```{python}
+import pandas as pd
+import altair as alt
+
+# 1. 准备数据并计算指标
+df_drain = community_efficiency.merge(
+    df_acs[['Community Area', 'Est_Monthly_Income']], 
+    on='Community Area'
+)
+
+# 剔除离群点
+outliers = ['LOOP', 'FULLER PARK']
+df_drain_filtered = df_drain[~df_drain['Community Area'].isin(outliers)].copy()
+
+# 计算指数
+fine_amount = 100
+df_drain_filtered['Wealth_Drain_Index'] = (df_drain_filtered['TOTAL_VIOLATIONS_2023'] * fine_amount) / df_drain_filtered['Est_Monthly_Income']
+
+# --- 关键修改：预先计算好 X 轴的排序列表 ---
+# 按收入升序排列，并提取社区名称列表
+sorted_communities = df_drain_filtered.sort_values('Est_Monthly_Income')['Community Area'].unique().tolist()
+
+# 识别最高点和最低点以供标注
+max_pt = df_drain_filtered.loc[[df_drain_filtered['Wealth_Drain_Index'].idxmax()]]
+min_pt = df_drain_filtered.loc[[df_drain_filtered['Wealth_Drain_Index'].idxmin()]]
+highlights = pd.concat([max_pt, min_pt])
+
+# 2. 绘制基础面积图
+area_chart = alt.Chart(df_drain_filtered).mark_area(
+    line={'color':'darkred', 'width': 2},
+    color=alt.Gradient(
+        gradient='linear',
+        stops=[alt.GradientStop(color='red', offset=0),
+               alt.GradientStop(color='orange', offset=1)],
+        x1=1, x2=1, y1=1, y2=0
+    ), 
+    opacity=0.5
+).encode(
+    x=alt.X('Community Area:N',
+            sort=sorted_communities,  # 使用预设的列表进行强制排序
+            axis=alt.Axis(labelAngle=-45, title="Communities (Sorted by Income: Low to High)")),
+    y=alt.Y('Wealth_Drain_Index:Q',
+            title="Community Wealth Drain Index",
+            axis=alt.Axis(format='.1f')),
+    tooltip=[
+        alt.Tooltip('Community Area:N', title='Community'),
+        alt.Tooltip('TOTAL_VIOLATIONS_2023:Q', title='Avg Violations/Camera', format='.0f'),
+        alt.Tooltip('Est_Monthly_Income:Q', title='Avg Monthly Income', format='$.0f'),
+        alt.Tooltip('Wealth_Drain_Index:Q', title='Drain Index', format='.2f')
+    ]
+).properties(
+    title='The Double Jeopardy: Community Wealth Drain Index (Filtered)',
+    width=800,
+    height=400
+)
+
+# 3. 数值标注层（同样使用预设排序）
+labels = alt.Chart(highlights).mark_text(
+    align='center',
+    baseline='bottom',
+    dy=-10,
+    fontSize=12,
+    fontWeight='bold',
+    color='black'
+).encode(
+    x=alt.X('Community Area:N', sort=sorted_communities),
+    y=alt.Y('Wealth_Drain_Index:Q'),
+    text=alt.Text('Wealth_Drain_Index:Q', format='.2f')
+)
+
+# 4. 圆点标记层（同样使用预设排序）
+points = alt.Chart(highlights).mark_circle(size=80, color='black').encode(
+    x=alt.X('Community Area:N', sort=sorted_communities),
+    y=alt.Y('Wealth_Drain_Index:Q')
+)
+
+# 组合图表
+chart3_final = area_chart + labels + points
+chart3_final.display()
+
+
+```
+
+## 图5
+```{python}
+# 2. 将社区按收入划分为 5 个等份 (Quintiles)
+# q=5 代表五分位，labels 为 1 到 5
+df_drain_filtered ['Income_Group'] = pd.qcut(
+    df_drain_filtered ['Est_Monthly_Income'], 
+    q=5, 
+    labels=['Poorest 20%', 'Lower Middle', 'Middle', 'Upper Middle', 'Wealthiest 20%']
+)
+
+# 3. 计算每一组的平均“财富流失指数”
+group_summary = df_drain_filtered.groupby('Income_Group')['Wealth_Drain_Index'].mean().reset_index()
+
+# 4. 绘制柱状图
+quintile_chart = alt.Chart(group_summary).mark_bar().encode(
+    x=alt.X('Income_Group:O', 
+            sort=['Poorest 20%', 'Lower Middle', 'Middle', 'Upper Middle', 'Wealthiest 20%'],
+            title="Community Wealth Groups (by Monthly Income)"),
+    y=alt.Y('Wealth_Drain_Index:Q', 
+            title="Avg. Wealth Drain Index"),
+    color=alt.Color('Income_Group:O', 
+                    scale=alt.Scale(scheme='yelloworangered', reverse=True), 
+                    legend=None),
+    tooltip=['Income_Group', 'Wealth_Drain_Index']
+).properties(
+    title='The Poverty Penalty: Average Economic Drain by Income Quintile',
+    width=600,
+    height=400
+)
+
+# 添加数值标注
+text = quintile_chart.mark_text(
+    align='center',
+    baseline='bottom',
+    dy=-5
+).encode(
+    text=alt.Text('Wealth_Drain_Index:Q', format='.1f')
+)
+
+(quintile_chart + text).display()
+
+```
