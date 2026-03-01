@@ -1,0 +1,107 @@
+```{python}
+import altair as alt
+import pandas as pd
+import geopandas as gpd
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+script_dir = Path(__file__).parent
+derived_dir = script_dir / "../data/derived-data"
+
+gdf_communities = gpd.read_file(derived_dir / "cleaned_communities.geojson")
+
+df_acs = pd.read_csv(derived_dir / "cleaned_acs_data.csv")
+
+df_cameras = pd.read_csv(derived_dir / "cleaned_red_light_2023.csv")
+
+gdf_cameras = gpd.GeoDataFrame(
+    df_cameras, 
+    geometry=gpd.points_from_xy(df_cameras.LONGITUDE, df_cameras.LATITUDE),
+    crs="EPSG:4326"
+)
+
+cameras_with_community = gpd.sjoin(gdf_cameras, gdf_communities, how="left", predicate="within")
+efficiency_df = cameras_with_community.merge(df_acs, left_on='COMMUNITY', right_on='Community Area')
+
+community_efficiency = efficiency_df.groupby('Community Area').agg({
+    'TOTAL_VIOLATIONS_2023': 'mean',
+    'Poverty_Rate': 'first'
+}).reset_index()
+
+
+base = alt.Chart(community_efficiency).encode(
+    x=alt.X('Poverty_Rate:Q', 
+            title="Community Poverty Rate",
+            axis=alt.Axis(format='%')),
+    y=alt.Y('TOTAL_VIOLATIONS_2023:Q', 
+            title="Average Violations per Camera")
+)
+
+points = base.mark_circle(size=70, opacity=0.5, color='steelblue').encode(
+    tooltip=['Community Area', 'Poverty_Rate', 'TOTAL_VIOLATIONS_2023']
+)
+
+trend_line = base.transform_regression(
+    'Poverty_Rate', 'TOTAL_VIOLATIONS_2023'
+).mark_line(color='crimson', size=3)
+
+chart2_final = (points + trend_line).properties(
+    title='Correlation: Camera Productivity vs. Community Poverty (2023)',
+    width=600,
+    height=400
+)
+
+chart2_final
+```
+
+Several potential outliers were noted:
+
+1. THE LOOP (Ignore): As a central business district, its traffic consists of tens of thousands of commuters and tourists. Retaining it would mislead the true relationship between poverty rates and enforcement pressure, given the significant disconnect between the target audience of tickets and local residents.
+
+2. FULLER PARK (Ignore): This community is one of Chicago's least populated and contains a major highway hub (Dan Ryan Expressway). Removing it would make the regression trend more universal.
+
+3. LAKE VIEW (Retain): This is a mature, high-density residential area. Retaining it serves as a typical example of an "affluent, high-density area," contrasting it with similarly high-density but high-poverty communities.
+
+4. GARFIELD RIDGE (Retain): The high violation rate in this area is related to the transit traffic from its proximity to Midway Airport. However, because it still possesses complete community residential characteristics, retaining it reflects the enforcement situation in "communities on the periphery of large infrastructure."
+
+5. CHATHAM and SOUTH SHORE (Retain): Typical low- to middle-income neighborhoods; removing them would mask the structural pressures faced by communities with specific socioeconomic backgrounds.
+
+```{python}
+outliers = ['LOOP', 'FULLER PARK']
+community_efficiency_filtered = community_efficiency[
+    ~community_efficiency['Community Area'].isin(outliers)
+].copy()
+
+x_max = community_efficiency['Poverty_Rate'].max() * 1.05
+y_max = community_efficiency['TOTAL_VIOLATIONS_2023'].max() * 1.05
+
+def create_trend_chart(data, title):
+    base = alt.Chart(data).encode(
+        x=alt.X('Poverty_Rate:Q', 
+                title="Community Poverty Rate",
+                axis=alt.Axis(format='%'),
+                scale=alt.Scale(domain=[0, x_max])),
+        y=alt.Y('TOTAL_VIOLATIONS_2023:Q', 
+                title="Average Violations per Camera",
+                scale=alt.Scale(domain=[0, y_max]))
+    )
+    
+    points = base.mark_circle(size=70, opacity=0.5, color='steelblue').encode(
+        tooltip=['Community Area', 'Poverty_Rate', 'TOTAL_VIOLATIONS_2023']
+    )
+    
+    trend_line = base.transform_regression(
+        'Poverty_Rate', 'TOTAL_VIOLATIONS_2023'
+    ).mark_line(color='crimson', size=3)
+    
+    return (points + trend_line).properties(
+        title=title,
+        width=350,
+        height=300
+    )
+
+chart_full = create_trend_chart(community_efficiency, "Full Sample (With Outliers)")
+chart_filtered = create_trend_chart(community_efficiency_filtered, "Filtered Sample (Without Loop/Fuller Park)")
+
+(chart_full | chart_filtered).display()
+```
