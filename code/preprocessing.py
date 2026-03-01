@@ -1,32 +1,72 @@
-import geopandas as gpd
 import pandas as pd
+import numpy as np
+import geopandas as gpd
 from pathlib import Path
-from shapely import wkt
+from shapely.wkt import loads
 
 script_dir = Path(__file__).parent
+raw_dir = script_dir / "raw-data"
+output_dir = script_dir / "derived-data"
 
-# Process fire data
-raw_fire = script_dir / '../data/raw-data/fire.csv'
-output_fire = script_dir / '../data/derived-data/fire_filtered.gpkg'
+file_path = raw_dir / "Red_Light_Camera_Violations.csv"
+df_red_light = pd.read_csv(file_path)
 
-df = pd.read_csv(raw_fire)
-df['geometry'] = df['geometry'].apply(wkt.loads)
-fire_gdf = gpd.GeoDataFrame(df, geometry='geometry')
+df_clean = df_red_light.dropna(subset=['LATITUDE', 'LONGITUDE']).copy()
 
-fire_gdf = fire_gdf[fire_gdf['FIRE_YEAR'] > 2015]
+camera_summary = df_clean.groupby('CAMERA ID').agg({
+    'VIOLATIONS': 'sum',          
+    'INTERSECTION': 'first',     
+    'LATITUDE': 'first',         
+    'LONGITUDE': 'first'         
+}).reset_index()
 
-fire_gdf.to_file(output_fire)
+camera_summary.rename(columns={'VIOLATIONS': 'TOTAL_VIOLATIONS_2023'}, inplace=True)
+camera_summary.to_csv(output_dir / "cleaned_red_light_2023.csv", index=False)
 
-# Process Canadian CPI data
-raw_cpi = script_dir / '../data/raw-data/canadian_cpi.csv'
-output_cpi = script_dir / '../data/derived-data/cpi_filtered.csv'
+print(f"Cleaning complete. There were {len(camera_summary)} active cameras in 2023.")
+print(camera_summary.head())
 
-cpi_df = pd.read_csv(raw_cpi)
-cpi_df = cpi_df.rename(columns={cpi_df.columns[0]: 'Product'})
+#############
 
-# Filter to columns from 2020 onwards
-date_cols = [col for col in cpi_df.columns if '2020' in col or '2021' in col or '2022' in col or '2023' in col or '2024' in col]
-cpi_filtered = cpi_df[['Product'] + date_cols].dropna(subset=['Product'])
+acs_path = raw_dir / "ACS_5_Year_Data_by_Community_Area.csv"
+df_acs = pd.read_csv(acs_path)
 
-cpi_filtered.to_csv(output_cpi, index=False)
-print(f"CPI data filtered: {len(cpi_filtered)} products, {len(date_cols)} months")
+income_cols = ['Under $25,000', '$25,000 to $49,999', '$50,000 to $74,999', '$75,000 to $125,000', '$125,000 +']
+df_acs['Total_Households'] = df_acs[income_cols].sum(axis=1)
+
+df_acs['Poverty_Rate'] = df_acs['Under $25,000'] / df_acs['Total_Households']
+
+midpoints = np.array([12500, 37500, 62500, 100000, 175000]) 
+df_acs['Est_Annual_Income'] = (df_acs[income_cols] * midpoints).sum(axis=1) / df_acs['Total_Households']
+df_acs['Est_Monthly_Income'] = df_acs['Est_Annual_Income'] / 12
+
+clean_acs = df_acs[[
+    'Community Area', 'Poverty_Rate',
+    'Est_Monthly_Income', 'Total Population'
+]].copy()
+
+clean_acs.to_csv(output_dir / "cleaned_acs_data.csv", index=False)
+
+print("Preview of the cleaned data:")
+print(clean_acs.head())
+
+##############
+
+geo_path = raw_dir / "Boundaries_-_Community_Areas.csv"
+df_geo_raw = pd.read_csv(geo_path)
+
+df_geo_raw['geometry'] = df_geo_raw['the_geom'].apply(loads)
+
+gdf_community = gpd.GeoDataFrame(df_geo_raw, geometry='geometry', crs="EPSG:4326")
+
+gdf_community = gdf_community[['COMMUNITY', 'AREA_NUMBE', 'geometry']].copy()
+gdf_community['AREA_NUMBE'] = gdf_community['AREA_NUMBE'].astype(int)
+
+gdf_community['COMMUNITY'] = gdf_community['COMMUNITY'].str.upper().str.strip()
+
+print("Geographic data cleaning complete:")
+print(gdf_community.head())
+
+gdf_community.to_file(output_dir / "cleaned_communities.geojson", driver="GeoJSON")
+
+print(f"All cleaned data has been successfully stored in: {output_dir}")
