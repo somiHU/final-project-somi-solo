@@ -5,7 +5,7 @@ import folium
 from pathlib import Path
 
 script_dir = Path(__file__).parent
-derived_dir = script_dir / "data" / "derived-data"
+derived_dir = script_dir.parent / "data" / "derived-data"
 
 @st.cache_data
 def load_and_process_data():
