@@ -1,0 +1,12 @@
+# Chicago Red Light: Poverty Penalty Simulator
+# Install: pip install -r requirements.txt
+
+streamlit>=1.28
+pandas>=2.0
+numpy>=1.24
+geopandas>=0.14
+shapely>=2.0
+folium>=0.15
+matplotlib>=3.7
+altair>=5.0
+seaborn>=0.12
