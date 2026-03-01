@@ -4,7 +4,6 @@ import geopandas as gpd
 import folium
 from pathlib import Path
 
-# --- 1. Data Initialization & Caching ---
 script_dir = Path(__file__).parent
 derived_dir = script_dir / "data" / "derived-data"
 
@@ -20,7 +19,6 @@ def load_and_process_data():
     df_acs['Community Area'] = df_acs['Community Area'].str.upper().str.strip()
     gdf_communities['COMMUNITY'] = gdf_communities['COMMUNITY'].str.upper().str.strip()
     
-    # 空间连接用于计算执法效率
     gdf_cameras_geo = gpd.GeoDataFrame(
         df_cameras, 
         geometry=gpd.points_from_xy(df_cameras.LONGITUDE, df_cameras.LATITUDE),
@@ -39,12 +37,9 @@ def load_and_process_data():
 
 df_camera, gdf_communities, df_acs = load_and_process_data()
 
-# --- 2. Anchoring Metrics (基准指标) ---
-# 选取对比锚点
 poorest = df_acs.loc[df_acs['Est_Monthly_Income'].idxmin()]
 wealthiest = df_acs.loc[df_acs['Est_Monthly_Income'].idxmax()]
 
-# 静态不平等倍数：基于有摄像头数据的社区计算
 p_poor = df_camera.loc[df_camera['Est_Monthly_Income'].idxmin()]
 p_rich = df_camera.loc[df_camera['Est_Monthly_Income'].idxmax()]
 pressure_multiplier = (p_poor['TOTAL_VIOLATIONS_2023'] / p_poor['Est_Monthly_Income']) / \
@@ -52,26 +47,22 @@ pressure_multiplier = (p_poor['TOTAL_VIOLATIONS_2023'] / p_poor['Est_Monthly_Inc
 
 time_multiplier = wealthiest['Est_Monthly_Income'] / poorest['Est_Monthly_Income']
 
-# --- 3. UI Layout ---
 st.set_page_config(page_title="Poverty Penalty Simulator", layout="wide")
 st.title("Chicago Red Light: The Poverty Penalty Simulator")
 
 st.sidebar.header("Policy Settings")
 fine_amount = st.sidebar.slider("Select Ticket Fine Amount ($)", 0, 300, 100, 10)
 
-# --- 4. Dynamic Calculations ---
 def get_work_hours(income, fine):
     hourly_wage = income / 160
     return fine / hourly_wage if hourly_wage > 0 else 0
 
-# 核心对齐：计算全市每个社区的平均小时数，而不是计算平均收入的小时数
 all_hours = df_acs['Est_Monthly_Income'].apply(lambda x: get_work_hours(x, fine_amount))
-hours_city = all_hours.mean()  # 这将显示为 2.2h (当罚金为 100 时)
+hours_city = all_hours.mean() 
 
 hours_poor = get_work_hours(poorest['Est_Monthly_Income'], fine_amount)
 hours_rich = get_work_hours(wealthiest['Est_Monthly_Income'], fine_amount)
 
-# --- 5. Metrics Display (已移除 Wealth Drain) ---
 st.subheader(f"The Human Cost of a ${fine_amount} Fine")
 st.write("Below is the labor required to pay for a single violation across different economic strata.")
 
@@ -84,7 +75,6 @@ col3.metric(f"Wealthiest: {wealthiest['Community Area']}", f"{hours_rich:.1f}h",
 
 st.divider()
 
-# --- 6. The Dynamic Map ---
 st.subheader("Geographical Distribution of the 'Time Tax'")
 map_acs = df_acs[["Community Area", "Est_Monthly_Income"]].copy()
 map_acs["Dynamic_Hours"] = map_acs["Est_Monthly_Income"].apply(
@@ -132,7 +122,7 @@ with col_label:
     * **Dark Red Areas**: Represent a 'High Poverty Penalty'. Residents here must work significantly longer to satisfy the same legal debt.
     * **Lighter Areas**: Represent lower time costs relative to income.
     """)
-# --- 7. Static Multipliers (已增强解释) ---
+    
 st.divider()
 
 st.subheader("Structural Inequity Multipliers")
@@ -141,7 +131,6 @@ m1, m2 = st.columns(2)
 
 with m1:
     st.metric("Systemic Pressure Gap", f"{pressure_multiplier:.1f}x")
-    # 使用 LaTeX 格式列出清晰的计算公式
     st.markdown(r"**Calculation Formula:**")
     st.latex(r"\frac{\text{Violations}_{\text{the poorest}} / \text{Income}_{\text{the poorest}}}{\text{Violations}_{\text{the richest}} / \text{Income}_{\text{the richest}}}")
     
@@ -157,6 +146,3 @@ with m2:
     st.metric("Individual Labor Gap", f"{time_multiplier:.1f}x")
     st.write("**The 'Time Tax' Gap**: This is a pure measure of income inequality. It shows that a resident in the poorest neighborhood must sacrifice this many times more hours of their life to pay the same ticket as a wealthy resident.")
 st.info("**Note on Structural Underestimation:** The current system stress differential is likely **underestimated**. Many low-income communities currently lack surveillance cameras; if future law enforcement efforts cover these areas, their wealth loss index will far exceed current observations.")
-
-
-##输入查看：/opt/miniconda3/bin/streamlit run "/Users/somihu/Desktop/研二/PPHA 30538/Final project/app.py"
