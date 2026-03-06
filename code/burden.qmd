@@ -9,13 +9,7 @@ script_dir = Path(__file__).parent
 derived_dir = script_dir / "../data/derived-data"
 
 gdf_communities = gpd.read_file(derived_dir / "cleaned_communities.geojson")
-<<<<<<< HEAD
 df_acs = pd.read_csv(derived_dir / "cleaned_acs_data.csv")
-=======
-
-df_acs = pd.read_csv(derived_dir / "cleaned_acs_data.csv")
-
->>>>>>> 36dceff9e790880c6152bb183399bdc8f61ff719
 df_cameras = pd.read_csv(derived_dir / "cleaned_red_light_2023.csv")
 
 gdf_cameras = gpd.GeoDataFrame(
@@ -50,15 +44,11 @@ quintile_chart = alt.Chart(group_summary).mark_bar().encode(
             title="Community Wealth Groups (by Monthly Income)"),
     y=alt.Y('Wealth_Drain_Index:Q', 
             title="Avg. Wealth Drain Index"),
-<<<<<<< HEAD
+
     color=alt.Color('Wealth_Drain_Index:Q', 
                 scale=alt.Scale(scheme='yelloworangered'), 
                 legend=None),
-=======
-    color=alt.Color('Income_Group:O', 
-                    scale=alt.Scale(scheme='yelloworangered', reverse=True), 
-                    legend=None),
->>>>>>> 36dceff9e790880c6152bb183399bdc8f61ff719
+
     tooltip=['Income_Group', 'Wealth_Drain_Index']
 ).properties(
     title='The Poverty Penalty: Average Economic Drain by Income Quintile',
