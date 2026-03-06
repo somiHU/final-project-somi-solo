@@ -1,51 +1,29 @@
 ---
 title: "Chicago Red Light 'Poverty Penalty'"
-author: "PPHA 30538 Final Project Group 50 - Xinyu(Somi)" 
+author: "PPHA 30538 Final Project Group 50 - Xinyu(Somi) Hu" 
 date: "today"
 format: 
   html:
     embed-resources: true
     toc: true
-    include-in-header:
+  pdf:
+    fontsize: 9pt
+    linestretch: 0.5
+    include-in-header: 
       text: |
-        <style>
-        header#title-block-header {
-            text-align: center; 
-            margin-bottom: 2em;
-        }
-        
-        header#title-block-header .title {
-            font-size: 22px;    
-            font-weight: bold;
-            color: #2c3e50;
-        }
-
-        header#title-block-header .author, 
-        header#title-block-header .date {
-            font-size: 14px;    
-            color: #7f8c8d;     
-        }
-
-        body {
-            font-size: 15px;
-        }
-        h3 {
-            font-size: 16px;
-            margin-top: 15px;
-            margin-bottom: 10px;
-            color: #2c3e50;
-            text-align: left;   
-        }
-        p {
-            margin-bottom: 0.5em; 
-        }
-        </style>
+        \usepackage[margin=0.5in]{geometry}
+        \usepackage{graphicx}
+        \usepackage{float}
+execute:
+  echo: false
 ---
 
-### Research Questions
+Group 50 Members: Xinyu Hu (CNetID: xinyuhu) - GitHub username: somiHU
+
+# Research Questions
 Against the backdrop of debt reforms aimed at mitigating the consequences of fines, is red-light camera enforcement still likely to disproportionately burden low-income communities in 2023, potentially undermining the Chicago city's equity objectives?
 
-### Methodology and Technical Approach
+# Methodology and Technical Approach
 To achieve a rigorous spatial and socio-economic analysis, I integrated three high-dimensional datasets from 2023:
 
 1. **City of Chicago Traffic Violations**: Comprehensive logs containing the location and frequency of every automated red-light enforcement event.
@@ -60,7 +38,7 @@ To operationalize the concept of economic burden, I developed two original distr
 
 2. **The Time Tax**: To translate monetary penalties into lived economic sacrifice, we convert the flat $100 fine into “human hours.” Using each community’s average hourly wage (derived from median income estimates), we estimate how many hours a typical resident must work to pay for a single violation. Unlike the nominal fine amount, the Time Tax reflects relative labor burden and highlights the regressive effect of uniform monetary sanctions across unequal income distributions.
 
-### Visual analysis
+# Visual analysis
 ##### Figure 1: Spatial Distribution of Cameras and Poverty
 ```{python}
 #| echo: false
@@ -69,7 +47,8 @@ import geopandas as gpd
 import altair as alt
 from pathlib import Path
 
-derived_dir = Path("data/derived-data")
+script_dir = Path(__file__).parent
+derived_dir = script_dir / "../data/derived-data"
 
 gdf_communities = gpd.read_file(derived_dir / "cleaned_communities.geojson")
 df_acs = pd.read_csv(derived_dir / "cleaned_acs_data.csv")
@@ -141,8 +120,6 @@ points = alt.Chart(df_cameras).mark_circle(
 ).project(**proj_params)
 
 map_chart = alt.layer(choropleth, points).properties(
-    width=700,
-    height=550,
     title='Spatial Exposure: Red Light Cameras vs. Poverty Rates (Chicago 2023)'
 )
 
@@ -160,30 +137,31 @@ community_efficiency = merged_data.groupby('Community Area').agg({
     'Poverty_Rate': 'first'
 }).reset_index()
 
+outliers = ['LOOP', 'FULLER PARK']
+community_efficiency_filtered = community_efficiency[
+    ~community_efficiency['Community Area'].isin(outliers)
+].copy()
 
-base = alt.Chart(community_efficiency).encode(
-    x=alt.X('Poverty_Rate:Q', 
-            title="Community Poverty Rate",
-            axis=alt.Axis(format='%')),
-    y=alt.Y('TOTAL_VIOLATIONS_2023:Q', 
-            title="Average Violations per Camera")
-)
+x_max = community_efficiency['Poverty_Rate'].max() * 1.05
+y_max = community_efficiency['TOTAL_VIOLATIONS_2023'].max() * 1.05
 
-points = base.mark_circle(size=70, opacity=0.5, color='steelblue').encode(
-    tooltip=['Community Area', 'Poverty_Rate', 'TOTAL_VIOLATIONS_2023']
-)
+def create_trend_chart(data, title):
+    base = alt.Chart(data).encode(
+        x=alt.X('Poverty_Rate:Q', title="Community Poverty Rate",
+                axis=alt.Axis(format='%'), scale=alt.Scale(domain=[0, x_max])),
+        y=alt.Y('TOTAL_VIOLATIONS_2023:Q', title="Average Violations per Camera",
+                scale=alt.Scale(domain=[0, y_max]))
+    )
+    points = base.mark_circle(size=70, opacity=0.5, color='steelblue').encode(
+        tooltip=['Community Area', 'Poverty_Rate', 'TOTAL_VIOLATIONS_2023']
+    )
+    trend_line = base.transform_regression('Poverty_Rate', 'TOTAL_VIOLATIONS_2023').mark_line(color='crimson', size=3)
+    return (points + trend_line).properties(title=title, width=350, height=300)
 
-trend_line = base.transform_regression(
-    'Poverty_Rate', 'TOTAL_VIOLATIONS_2023'
-).mark_line(color='crimson', size=3)
+chart_full = create_trend_chart(community_efficiency, "Full Sample (With Outliers)")
+chart_filtered = create_trend_chart(community_efficiency_filtered, "Filtered Sample (Without Loop/Fuller Park)")
 
-chart2_final = (points + trend_line).properties(
-    title='Correlation: Camera Productivity vs. Community Poverty (2023)',
-    width=300,
-    height=200
-)
-
-chart2_final
+(chart_full | chart_filtered)
 ```
 
 These scatter plots match neighborhood poverty rates with average violations per camera. After excluding statistical outliers (the Loop and Fuller Park), the regression line slopes upward, indicating that cameras in higher-poverty areas issue more violations on average. This reveals an “Efficiency Paradox”: while cameras are numerically concentrated in wealthier areas, enforcement intensity is higher in poorer neighborhoods. This directly addresses our research question by showing that enforcement pressure—not just camera placement—disproportionately affects low-income communities.
@@ -191,12 +169,16 @@ These scatter plots match neighborhood poverty rates with average violations per
 ##### Figure 3: Wealth Drain Index by Income Group
 ```{python}
 #| echo: false
+cameras_with_community = gpd.sjoin(gdf_cameras, gdf_communities, how="left", predicate="within")
+
+efficiency_df = cameras_with_community.merge(df_acs, left_on='COMMUNITY', right_on='Community Area')
+
 FINE_AMOUNT = 100
-merged_data['Wealth_Drain_Index'] = ((merged_data['TOTAL_VIOLATIONS_2023'] / 12) * FINE_AMOUNT) / merged_data['Est_Monthly_Income']
+efficiency_df['Wealth_Drain_Index'] = ((efficiency_df['TOTAL_VIOLATIONS_2023'] / 12) * FINE_AMOUNT) / efficiency_df['Est_Monthly_Income']
 
 outliers = ['LOOP', 'FULLER PARK']
-df_drain_filtered = merged_data[
-    ~merged_data['Community Area'].isin(outliers)
+df_drain_filtered = efficiency_df[
+    ~efficiency_df['Community Area'].isin(outliers)
 ].copy()
 
 df_drain_filtered['Income_Group'] = pd.qcut(
@@ -213,14 +195,14 @@ quintile_chart = alt.Chart(group_summary).mark_bar().encode(
             title="Community Wealth Groups (by Monthly Income)"),
     y=alt.Y('Wealth_Drain_Index:Q', 
             title="Avg. Wealth Drain Index"),
-    color=alt.Color('Income_Group:O', 
-                    scale=alt.Scale(scheme='yelloworangered', reverse=True), 
-                    legend=None),
+    color=alt.Color('Wealth_Drain_Index:Q', 
+                scale=alt.Scale(scheme='yelloworangered'), 
+                legend=None),
     tooltip=['Income_Group', 'Wealth_Drain_Index']
 ).properties(
     title='The Poverty Penalty: Average Economic Drain by Income Quintile',
-    width=300,
-    height=200
+    width=600,
+    height=400
 )
 
 text = quintile_chart.mark_text(
@@ -235,60 +217,68 @@ text = quintile_chart.mark_text(
 (quintile_chart + text).display()
 ```
 
-This bar chart groups communities into five income categories and measures the share of total monthly income extracted through fines (the Wealth Drain Index). The lowest-income group loses 4.4% of monthly resources, compared to 1.8% for the highest-income group. This figure demonstrates that the flat $100 fine produces unequal economic consequences. Although nominally uniform, its relative burden is significantly heavier in low-income communities, supporting our hypothesis of a regressive structural effect.
+This bar chart groups communities into five income categories and measures the share of total monthly income extracted through fines (the Wealth Drain Index). Color of columns encoding by the Wealth Drain Index. Darker colors indicate a higher wealth drain, while lighter colors show a lower impact. The graph shows that lowest-income group loses 4.4% of monthly resources, compared to 1.8% for the highest-income group. This figure demonstrates that the flat $100 fine produces unequal economic consequences. Although nominally uniform, its relative burden is significantly heavier in low-income communities, supporting our hypothesis of a regressive structural effect.
 
 ##### Figure 4: The Time Tax
 ```{python}
 #| echo: false
-import matplotlib.pyplot as plt
-import seaborn as sns
+df_filtered = df_acs[~df_acs['Community Area'].str.upper().isin(outliers)].copy()
 
-df_plot = df_acs[~df_acs['Community Area'].str.upper().isin(outliers)].copy()
-df_plot['Hourly_Wage'] = df_plot['Est_Monthly_Income'] / 160
-df_plot['Hours_to_Pay'] = FINE_AMOUNT / df_plot['Hourly_Wage']
+FINE = 100
+df_filtered['Hourly_Wage'] = df_filtered['Est_Monthly_Income'] / 160
+df_filtered['Hours_to_Pay'] = FINE / df_filtered['Hourly_Wage']
 
-df_plot = df_plot.sort_values('Hours_to_Pay', ascending=False)
+df_filtered = df_filtered.sort_values('Hours_to_Pay', ascending=False)
+avg_hours = df_filtered['Hours_to_Pay'].mean()
 
-plt.figure(figsize=(8, 4)) 
-sns.set_style("white")
+bars = alt.Chart(df_filtered).mark_bar(color='steelblue').encode(
+    x=alt.X('Community Area:N', sort='-y', title='Community Area'),
+    y=alt.Y('Hours_to_Pay:Q', title='Hours of Work to Pay One Ticket ($100)'),
+    color = alt.Color('Hours_to_Pay:Q'),
+    tooltip=['Community Area', 'Hours_to_Pay']
+)
 
-bars = plt.bar(df_plot['Community Area'], df_plot['Hours_to_Pay'],
-               color='steelblue', edgecolor='black', linewidth=0.3)
+rule = alt.Chart(pd.DataFrame({'avg': [avg_hours]})).mark_rule(color='red', strokeDash=[5, 5]).encode(
+    y='avg:Q'
+)
 
-plt.xticks(rotation=90, fontsize=7, ha='center') 
-plt.yticks(fontsize=7) 
+text = alt.Chart(pd.DataFrame({'avg': [avg_hours], 'label': [f'City Average: {avg_hours:.1f}h']})).mark_text(
+    align='left',
+    dx=5,
+    dy=-5,
+    color='red'
+).encode(
+    y='avg:Q',
+    text='label:N'
+)
 
-h_poor = bars[0].get_height()
-plt.text(0, h_poor + 0.5, f'Max: {h_poor:.1f}h', ha='center', fontweight='bold', color='darkred', fontsize=12) 
+chart = (bars + rule + text).properties(
+    title='Time Tax: Labor Hours to Pay One Ticket by Community',
+    width=800,
+    height=400
+).configure_axisX(
+    labelAngle=90
+)
 
-h_rich = bars[-1].get_height()
-plt.text(len(df_plot) - 1, h_rich + 0.5, f'Min: {h_rich:.1f}h', ha='center', fontweight='bold', color='darkgreen', fontsize=10) 
-
-avg_hours = df_plot['Hours_to_Pay'].mean()
-plt.axhline(avg_hours, color='blue', linestyle='--', alpha=0.6, label=f'City Average: {avg_hours:.1f}h')
-plt.legend(fontsize=10) 
-plt.ylabel('Hours of Work to Pay One Ticket ($100)', fontsize=10) 
-plt.title('Time Tax: Labor Hours to Pay One Ticket by Community', fontsize=10) 
-plt.tight_layout()
-plt.show()
+chart
 
 ```
 
-This ranking converts the $100 fine into required work hours based on local average wages. In Riverdale, residents must work over five hours to pay a single fine, while in Lincoln Park it takes just over one hour. By translating monetary penalties into labor time, this figure highlights the lived dimension of inequality. It reinforces our core argument: a formally equal fine results in substantively unequal “life-time” sacrifice, potentially undermining the city’s equity objectives.
+This ranking converts the $100 fine into required work hours based on local average wages, which could help us better evaluate the real pressure on citizens. In Riverdale, residents must work over five hours to pay a single fine, while in Lincoln Park it takes just over one hour. By translating monetary penalties into labor time, this figure highlights the lived dimension of inequality. It reinforces our core argument: a formally equal fine results in substantively unequal “life-time” sacrifice, potentially undermining the city’s equity objectives.
 
 ##### Streamlit App
 The streamlit app allows users to adjust fine amounts from $0 to $300 via a sidebar slider, instantly updating a choropleth map of Chicago. The tool’s primary objective is to test whether lowering ticket prices effectively reduces enforcement inequality.
-
+<https://final-project-somi-solo-ohmgvu3cqw4dsfz2h3obby.streamlit.app/>
 As the slider moves, the app dynamically visualizes the "Time Tax" across the city and updates key indicators, including the labor hours required for lowest-income and highest-income residents. By highlighting the persistent gap between these communities and the citywide average, the simulator demonstrates that structural disparity remains even at lower price points.
 
-### Weaknesses and Difficulties
+# Weaknesses and Difficulties
 1. **Residential Proxying**: Since we cannot track the home addresses of violators, we assume the burden falls on the local community. This likely results in a conservative estimate of inequality.
 
 2. **Behavioral Neutrality**: We assume driving habits are consistent across income levels. In reality, poorer neighborhoods often have wider, "highway-like" street designs that may inadvertently encourage higher violation rates.
 
 3. **The Debt Spiral**: Our model calculates the baseline $100 fine. It does not account for late fees or interest, which are much more likely to compound for residents living paycheck to paycheck.
 
-### Policy Implimentations
+# Policy Implimentations
 Our data proves that a "flat" fine is not an "equal" punishment. To move from financial extraction to equitable safety, we propose the following reforms:
 
 1. **Income-Indexed Fines**: Replace the $100 flat fee with a sliding scale model. By pegging the fine to a resident’s daily income (similar to the European "Day-Fine" system), the city can eliminate the 4.3x "Time Tax" disparity and ensure the penalty's impact is proportional to the violator’s means.
