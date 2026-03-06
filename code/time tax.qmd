@@ -1,0 +1,51 @@
+```{python}
+import pandas as pd
+import altair as alt
+from pathlib import Path
+
+script_dir = Path(__file__).parent
+derived_dir = script_dir / "../data/derived-data"
+
+df_acs = pd.read_csv(derived_dir / "cleaned_acs_data.csv")
+
+outliers = ['LOOP', 'FULLER PARK']
+df_filtered = df_acs[~df_acs['Community Area'].str.upper().isin(outliers)].copy()
+
+FINE = 100
+df_filtered['Hourly_Wage'] = df_filtered['Est_Monthly_Income'] / 160
+df_filtered['Hours_to_Pay'] = FINE / df_filtered['Hourly_Wage']
+
+df_filtered = df_filtered.sort_values('Hours_to_Pay', ascending=False)
+avg_hours = df_filtered['Hours_to_Pay'].mean()
+
+bars = alt.Chart(df_filtered).mark_bar(color='steelblue').encode(
+    x=alt.X('Community Area:N', sort='-y', title='Community Area'),
+    y=alt.Y('Hours_to_Pay:Q', title='Hours of Work to Pay One Ticket ($100)'),
+    color = alt.Color('Hours_to_Pay:Q'),
+    tooltip=['Community Area', 'Hours_to_Pay']
+)
+
+rule = alt.Chart(pd.DataFrame({'avg': [avg_hours]})).mark_rule(color='red', strokeDash=[5, 5]).encode(
+    y='avg:Q'
+)
+
+text = alt.Chart(pd.DataFrame({'avg': [avg_hours], 'label': [f'City Average: {avg_hours:.1f}h']})).mark_text(
+    align='left',
+    dx=5,
+    dy=-5,
+    color='red'
+).encode(
+    y='avg:Q',
+    text='label:N'
+)
+
+chart = (bars + rule + text).properties(
+    title='Time Tax: Labor Hours to Pay One Ticket by Community',
+    width=800,
+    height=400
+).configure_axisX(
+    labelAngle=90
+)
+
+chart
+```
