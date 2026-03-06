@@ -1,0 +1,298 @@
+---
+title: "Chicago Red Light 'Poverty Penalty'"
+author: "PPHA 30538 Final Project Group 50 - Xinyu(Somi)" 
+date: "today"
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    include-in-header:
+      text: |
+        <style>
+        header#title-block-header {
+            text-align: center; 
+            margin-bottom: 2em;
+        }
+        
+        header#title-block-header .title {
+            font-size: 22px;    
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        header#title-block-header .author, 
+        header#title-block-header .date {
+            font-size: 14px;    
+            color: #7f8c8d;     
+        }
+
+        body {
+            font-size: 15px;
+        }
+        h3 {
+            font-size: 16px;
+            margin-top: 15px;
+            margin-bottom: 10px;
+            color: #2c3e50;
+            text-align: left;   
+        }
+        p {
+            margin-bottom: 0.5em; 
+        }
+        </style>
+---
+
+### Research Questions
+Against the backdrop of debt reforms aimed at mitigating the consequences of fines, is red-light camera enforcement still likely to disproportionately burden low-income communities in 2023, potentially undermining the Chicago city's equity objectives?
+
+### Methodology and Technical Approach
+To achieve a rigorous spatial and socio-economic analysis, I integrated three high-dimensional datasets from 2023:
+
+1. **City of Chicago Traffic Violations**: Comprehensive logs containing the location and frequency of every automated red-light enforcement event.
+
+2. **U.S. Census Bureau American Community Survey (ACS)**: Granular demographic data and median household income at the community level.
+
+3. **City of Chicago Community Boundaries**: Shapefiles used to perform spatial joins between camera coordinates and neighborhood identities.
+
+To operationalize the concept of economic burden, I developed two original distributive metrics:
+
+1. **Wealth Drain Index**: This metric estimates the share of a community’s aggregate monthly income extracted through red-light fines. Specifically, we calculate the total dollar amount of violations issued within a community and divide it by the community’s total estimated monthly household income. This index captures how enforcement functions as a localized fiscal drain relative to economic capacity.
+
+2. **The Time Tax**: To translate monetary penalties into lived economic sacrifice, we convert the flat $100 fine into “human hours.” Using each community’s average hourly wage (derived from median income estimates), we estimate how many hours a typical resident must work to pay for a single violation. Unlike the nominal fine amount, the Time Tax reflects relative labor burden and highlights the regressive effect of uniform monetary sanctions across unequal income distributions.
+
+### Visual analysis
+##### Figure 1: Spatial Distribution of Cameras and Poverty
+```{python}
+#| echo: false
+import pandas as pd
+import geopandas as gpd
+import altair as alt
+from pathlib import Path
+
+derived_dir = Path("data/derived-data")
+
+gdf_communities = gpd.read_file(derived_dir / "cleaned_communities.geojson")
+df_acs = pd.read_csv(derived_dir / "cleaned_acs_data.csv")
+df_cameras = pd.read_csv(derived_dir / "cleaned_red_light_2023.csv")
+
+gdf_communities['COMMUNITY'] = gdf_communities['COMMUNITY'].str.upper().str.strip()
+df_acs['Community Area'] = df_acs['Community Area'].str.upper().str.strip()
+
+gdf_communities = gdf_communities.to_crs("EPSG:4326")
+
+gdf_map = gdf_communities.merge(df_acs, left_on='COMMUNITY', right_on='Community Area')
+
+gdf_cameras = gpd.GeoDataFrame(
+    df_cameras,
+    geometry=gpd.points_from_xy(df_cameras.LONGITUDE, df_cameras.LATITUDE),
+    crs="EPSG:4326"
+)
+cameras_in_areas = gpd.sjoin(gdf_cameras, gdf_communities, how="left", predicate="within")
+merged_data = cameras_in_areas.merge(df_acs, left_on='COMMUNITY', right_on='Community Area')
+
+bins = [0, 0.20, 0.40, 1.0]
+labels = ['Below 20%', '20%-40%', 'Above 40%']
+merged_data['poverty_group'] = pd.cut(merged_data['Poverty_Rate'], bins=bins, labels=labels, include_lowest=True)
+stats = merged_data['poverty_group'].value_counts().reindex(labels).fillna(0).astype(int)
+
+gdf_map_simplified = gdf_map.copy()
+gdf_map_simplified['geometry'] = gdf_map_simplified.geometry.simplify(0.001)
+
+features = []
+for _, row in gdf_map_simplified.iterrows():
+    if row.geometry is None or row.geometry.is_empty:
+        continue
+    features.append({
+        'type': 'Feature',
+        'properties': {'COMMUNITY': row['COMMUNITY'], 'Poverty_Rate': float(row['Poverty_Rate'])},
+        'geometry': row.geometry.__geo_interface__
+    })
+geojson_fc = {'type': 'FeatureCollection', 'features': features}
+map_data = alt.InlineData(values=geojson_fc, format=alt.DataFormat(type='json', property='features'))
+
+proj_params = dict(type='mercator', scale=55000, center=[-87.65, 41.85])
+
+choropleth = alt.Chart(map_data).mark_geoshape(
+    stroke='white',
+    strokeWidth=0.5
+).encode(
+    color=alt.Color(
+        'properties.Poverty_Rate:Q',
+        scale=alt.Scale(scheme='yelloworangered', domain=[0, 0.5]),
+        title='Poverty Rate (%)'
+    ),
+    tooltip=[
+        alt.Tooltip('properties.COMMUNITY:N', title='Community'),
+        alt.Tooltip('properties.Poverty_Rate:Q', title='Poverty Rate', format='.1%')
+    ]
+).project(**proj_params)
+
+points = alt.Chart(df_cameras).mark_circle(
+    size=40,
+    color='blue',
+    opacity=0.6
+).encode(
+    longitude='LONGITUDE:Q',
+    latitude='LATITUDE:Q',
+    tooltip=[
+        alt.Tooltip('INTERSECTION:N', title='Intersection'),
+        alt.Tooltip('TOTAL_VIOLATIONS_2023:Q', title='Violations 2023')
+    ]
+).project(**proj_params)
+
+map_chart = alt.layer(choropleth, points).properties(
+    width=700,
+    height=550,
+    title='Spatial Exposure: Red Light Cameras vs. Poverty Rates (Chicago 2023)'
+)
+
+map_chart
+```
+
+This map overlays red-light camera locations on Chicago’s 77 community areas, shaded by poverty rate. At first glance, cameras appear more concentrated in historically wealthier North and East neighborhoods. Quantitatively, non-poverty areas contain substantially more cameras than high-poverty areas.However, this figure primarily measures device density, not punitive impact. It raises a critical  question central to our research: does a greater number of cameras necessarily translate into a greater enforcement burden?
+
+
+##### Figure 2: Enforcement Intensity and the “Efficiency Paradox”
+```{python}
+#| echo: false
+community_efficiency = merged_data.groupby('Community Area').agg({
+    'TOTAL_VIOLATIONS_2023': 'mean',
+    'Poverty_Rate': 'first'
+}).reset_index()
+
+
+base = alt.Chart(community_efficiency).encode(
+    x=alt.X('Poverty_Rate:Q', 
+            title="Community Poverty Rate",
+            axis=alt.Axis(format='%')),
+    y=alt.Y('TOTAL_VIOLATIONS_2023:Q', 
+            title="Average Violations per Camera")
+)
+
+points = base.mark_circle(size=70, opacity=0.5, color='steelblue').encode(
+    tooltip=['Community Area', 'Poverty_Rate', 'TOTAL_VIOLATIONS_2023']
+)
+
+trend_line = base.transform_regression(
+    'Poverty_Rate', 'TOTAL_VIOLATIONS_2023'
+).mark_line(color='crimson', size=3)
+
+chart2_final = (points + trend_line).properties(
+    title='Correlation: Camera Productivity vs. Community Poverty (2023)',
+    width=300,
+    height=200
+)
+
+chart2_final
+```
+
+These scatter plots match neighborhood poverty rates with average violations per camera. After excluding statistical outliers (the Loop and Fuller Park), the regression line slopes upward, indicating that cameras in higher-poverty areas issue more violations on average. This reveals an “Efficiency Paradox”: while cameras are numerically concentrated in wealthier areas, enforcement intensity is higher in poorer neighborhoods. This directly addresses our research question by showing that enforcement pressure—not just camera placement—disproportionately affects low-income communities.
+
+##### Figure 3: Wealth Drain Index by Income Group
+```{python}
+#| echo: false
+FINE_AMOUNT = 100
+merged_data['Wealth_Drain_Index'] = ((merged_data['TOTAL_VIOLATIONS_2023'] / 12) * FINE_AMOUNT) / merged_data['Est_Monthly_Income']
+
+outliers = ['LOOP', 'FULLER PARK']
+df_drain_filtered = merged_data[
+    ~merged_data['Community Area'].isin(outliers)
+].copy()
+
+df_drain_filtered['Income_Group'] = pd.qcut(
+    df_drain_filtered['Est_Monthly_Income'], 
+    q=5, 
+    labels=['Poorest 20%', 'Lower Middle', 'Middle', 'Upper Middle', 'Wealthiest 20%']
+)
+
+group_summary = df_drain_filtered.groupby('Income_Group')['Wealth_Drain_Index'].mean().reset_index()
+
+quintile_chart = alt.Chart(group_summary).mark_bar().encode(
+    x=alt.X('Income_Group:O', 
+            sort=['Poorest 20%', 'Lower Middle', 'Middle', 'Upper Middle', 'Wealthiest 20%'],
+            title="Community Wealth Groups (by Monthly Income)"),
+    y=alt.Y('Wealth_Drain_Index:Q', 
+            title="Avg. Wealth Drain Index"),
+    color=alt.Color('Income_Group:O', 
+                    scale=alt.Scale(scheme='yelloworangered', reverse=True), 
+                    legend=None),
+    tooltip=['Income_Group', 'Wealth_Drain_Index']
+).properties(
+    title='The Poverty Penalty: Average Economic Drain by Income Quintile',
+    width=300,
+    height=200
+)
+
+text = quintile_chart.mark_text(
+    align='center',
+    baseline='bottom',
+    dy=-5
+).encode(
+    text=alt.Text('Wealth_Drain_Index:Q', format='.1f')
+)
+
+
+(quintile_chart + text).display()
+```
+
+This bar chart groups communities into five income categories and measures the share of total monthly income extracted through fines (the Wealth Drain Index). The lowest-income group loses 4.4% of monthly resources, compared to 1.8% for the highest-income group. This figure demonstrates that the flat $100 fine produces unequal economic consequences. Although nominally uniform, its relative burden is significantly heavier in low-income communities, supporting our hypothesis of a regressive structural effect.
+
+##### Figure 4: The Time Tax
+```{python}
+#| echo: false
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+df_plot = df_acs[~df_acs['Community Area'].str.upper().isin(outliers)].copy()
+df_plot['Hourly_Wage'] = df_plot['Est_Monthly_Income'] / 160
+df_plot['Hours_to_Pay'] = FINE_AMOUNT / df_plot['Hourly_Wage']
+
+df_plot = df_plot.sort_values('Hours_to_Pay', ascending=False)
+
+plt.figure(figsize=(8, 4)) 
+sns.set_style("white")
+
+bars = plt.bar(df_plot['Community Area'], df_plot['Hours_to_Pay'],
+               color='steelblue', edgecolor='black', linewidth=0.3)
+
+plt.xticks(rotation=90, fontsize=7, ha='center') 
+plt.yticks(fontsize=7) 
+
+h_poor = bars[0].get_height()
+plt.text(0, h_poor + 0.5, f'Max: {h_poor:.1f}h', ha='center', fontweight='bold', color='darkred', fontsize=12) 
+
+h_rich = bars[-1].get_height()
+plt.text(len(df_plot) - 1, h_rich + 0.5, f'Min: {h_rich:.1f}h', ha='center', fontweight='bold', color='darkgreen', fontsize=10) 
+
+avg_hours = df_plot['Hours_to_Pay'].mean()
+plt.axhline(avg_hours, color='blue', linestyle='--', alpha=0.6, label=f'City Average: {avg_hours:.1f}h')
+plt.legend(fontsize=10) 
+plt.ylabel('Hours of Work to Pay One Ticket ($100)', fontsize=10) 
+plt.title('Time Tax: Labor Hours to Pay One Ticket by Community', fontsize=10) 
+plt.tight_layout()
+plt.show()
+
+```
+
+This ranking converts the $100 fine into required work hours based on local average wages. In Riverdale, residents must work over five hours to pay a single fine, while in Lincoln Park it takes just over one hour. By translating monetary penalties into labor time, this figure highlights the lived dimension of inequality. It reinforces our core argument: a formally equal fine results in substantively unequal “life-time” sacrifice, potentially undermining the city’s equity objectives.
+
+##### Streamlit App
+The streamlit app allows users to adjust fine amounts from $0 to $300 via a sidebar slider, instantly updating a choropleth map of Chicago. The tool’s primary objective is to test whether lowering ticket prices effectively reduces enforcement inequality.
+
+As the slider moves, the app dynamically visualizes the "Time Tax" across the city and updates key indicators, including the labor hours required for lowest-income and highest-income residents. By highlighting the persistent gap between these communities and the citywide average, the simulator demonstrates that structural disparity remains even at lower price points.
+
+### Weaknesses and Difficulties
+1. **Residential Proxying**: Since we cannot track the home addresses of violators, we assume the burden falls on the local community. This likely results in a conservative estimate of inequality.
+
+2. **Behavioral Neutrality**: We assume driving habits are consistent across income levels. In reality, poorer neighborhoods often have wider, "highway-like" street designs that may inadvertently encourage higher violation rates.
+
+3. **The Debt Spiral**: Our model calculates the baseline $100 fine. It does not account for late fees or interest, which are much more likely to compound for residents living paycheck to paycheck.
+
+### Policy Implimentations
+Our data proves that a "flat" fine is not an "equal" punishment. To move from financial extraction to equitable safety, we propose the following reforms:
+
+1. **Income-Indexed Fines**: Replace the $100 flat fee with a sliding scale model. By pegging the fine to a resident’s daily income (similar to the European "Day-Fine" system), the city can eliminate the 4.3x "Time Tax" disparity and ensure the penalty's impact is proportional to the violator’s means.
+
+2. **Abolishing the "Poverty Penalty"**: For low-income residents, the city should implement automatic grace periods and cap late fees. Preventing the "Debt Spiral" is critical; a single driving mistake should not lead to vehicle impoundment or a cycle of compounding debt that undermines recent city-wide reforms.
+
+3. **Infrastructure-First Audits**: High violation rates in specific neighborhoods should be treated as a signal of poor road design rather than a revenue opportunity. We recommend mandatory "Safety Design Audits" for high-productivity cameras, prioritizing road engineering changes—like extending yellow light durations—over punitive financial extraction.
