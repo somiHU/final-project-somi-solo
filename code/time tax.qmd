@@ -1,6 +1,11 @@
 ```{python}
 import pandas as pd
+<<<<<<< HEAD
 import altair as alt
+=======
+import matplotlib.pyplot as plt
+import seaborn as sns
+>>>>>>> 36dceff9e790880c6152bb183399bdc8f61ff719
 from pathlib import Path
 
 script_dir = Path(__file__).parent
@@ -9,6 +14,7 @@ derived_dir = script_dir / "../data/derived-data"
 df_acs = pd.read_csv(derived_dir / "cleaned_acs_data.csv")
 
 outliers = ['LOOP', 'FULLER PARK']
+<<<<<<< HEAD
 df_filtered = df_acs[~df_acs['Community Area'].str.upper().isin(outliers)].copy()
 
 FINE = 100
@@ -48,4 +54,36 @@ chart = (bars + rule + text).properties(
 )
 
 chart
+=======
+df_plot = df_acs[~df_acs['Community Area'].str.upper().isin(outliers)].copy()
+
+FINE = 100
+df_plot['Hourly_Wage'] = df_plot['Est_Monthly_Income'] / 160
+df_plot['Hours_to_Pay'] = FINE / df_plot['Hourly_Wage']
+
+df_plot = df_plot.sort_values('Hours_to_Pay', ascending=False)
+
+plt.figure(figsize=(25, 12))
+sns.set_style("white")
+
+bars = plt.bar(df_plot['Community Area'], df_plot['Hours_to_Pay'],
+               color='steelblue', edgecolor='black', linewidth=0.3)
+
+plt.xticks(rotation=90, fontsize=10, ha='center')
+plt.yticks(fontsize=14)
+
+h_poor = bars[0].get_height()
+plt.text(0, h_poor + 0.5, f'Max: {h_poor:.1f}h', ha='center', fontweight='bold', color='darkred', fontsize=12)
+
+h_rich = bars[-1].get_height()
+plt.text(len(df_plot) - 1, h_rich + 0.5, f'Min: {h_rich:.1f}h', ha='center', fontweight='bold', color='darkgreen', fontsize=12)
+
+avg_hours = df_plot['Hours_to_Pay'].mean()
+plt.axhline(avg_hours, color='blue', linestyle='--', alpha=0.6, label=f'City Average: {avg_hours:.1f}h')
+plt.legend(fontsize=15)
+plt.ylabel('Hours of Work to Pay One Ticket ($100)', fontsize=12)
+plt.title('Time Tax: Labor Hours to Pay One Ticket by Community', fontsize=15)
+plt.tight_layout()
+plt.show()
+>>>>>>> 36dceff9e790880c6152bb183399bdc8f61ff719
 ```
